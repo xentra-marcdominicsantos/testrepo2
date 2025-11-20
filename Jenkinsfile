@@ -41,9 +41,7 @@ pipeline {
                             }
                         }
                     }
-                }
-            }
-        }
+
 
         stage('SonarQube Scan') {
             steps {
