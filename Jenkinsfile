@@ -28,16 +28,14 @@ pipeline {
         }
 
         stage('Build & Test') {
-            parallel {
-                script {
-                    services.each { svc ->
-                        stages[svc] = {
-                            stage("Build ${svc}") {
-                                steps {
-                                    dir(svc) {
-                                        sh "dotnet restore"
-                                        sh "dotnet build -c Release"
-                                        sh "dotnet test --no-build"
+    steps {
+        script {
+            services.each { svc ->
+                echo "Building and testing ${svc}"
+                dir(svc) {
+                    sh "dotnet restore"
+                    sh "dotnet build -c Release"
+                    sh "dotnet test --no-build"
                                     }
                                 }
                             }
