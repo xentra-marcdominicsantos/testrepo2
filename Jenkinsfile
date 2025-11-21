@@ -2,11 +2,11 @@ pipeline {
     agent any
 
     environment {
-        PATH = "/usr/lib/dotnet:${env.PATH}"        // Correct .NET installation path
-        DOTNET_ROOT = "/usr/lib/dotnet"            // Correct .NET root
-        SONAR_SERVER = 'SonarQubeServer'           // SonarQube server name in Jenkins
-        SSH_CRED_ID = 'jenkins-test-server-ssh'    // SSH credential for test server
-        REMOTE_BASE = '/opt/microservices'         // Deployment base path
+        PATH = "/snap/bin:/home/jenkins/.dotnet/tools:${env.PATH}" // Include Snap binaries + dotnet global tools
+        DOTNET_ROOT = "/snap/dotnet-sdk/current"                  // .NET root
+        SONAR_SERVER = 'SonarQubeServer'                          // SonarQube server name in Jenkins
+        SSH_CRED_ID = 'jenkins-test-server-ssh'                  // SSH credential for test server
+        REMOTE_BASE = '/opt/microservices'                       // Deployment base path
         TEST_SERVER_IP = '172.31.7.79'
     }
 
@@ -25,7 +25,7 @@ pipeline {
 
         stage('Verify .NET Version') {
             steps {
-                sh '/usr/lib/dotnet/dotnet --version'
+                sh 'dotnet --version'
             }
         }
 
@@ -50,11 +50,12 @@ pipeline {
                         ["${svc}": {
                             stage("Build & Test: ${svc}") {
                                 dir(svc) {
+                                    // Clean output folder before publish
                                     sh 'rm -rf output/'
-                                    sh '/usr/lib/dotnet/dotnet restore'
-                                    sh '/usr/lib/dotnet/dotnet build -c Release'
-                                    sh '/usr/lib/dotnet/dotnet test --no-build'
-                                    sh '/usr/lib/dotnet/dotnet publish -c Release -o output/'
+                                    sh "dotnet restore"
+                                    sh "dotnet build -c Release"
+                                    sh "dotnet test --no-build"
+                                    sh "dotnet publish -c Release -o output/"
                                 }
                             }
                         }]
@@ -71,9 +72,9 @@ pipeline {
                     services.each { svc ->
                         dir(svc) {
                             withCredentials([string(credentialsId: 'sonar_token', variable: 'SONAR_AUTH_TOKEN')]) {
-                                sh "/usr/lib/dotnet/dotnet-sonarscanner begin /k:${svc} /d:sonar.login=$SONAR_AUTH_TOKEN /d:sonar.host.url=http://172.31.1.74:9000"
-                                sh '/usr/lib/dotnet/dotnet build'
-                                sh "/usr/lib/dotnet/dotnet-sonarscanner end /d:sonar.login=$SONAR_AUTH_TOKEN"
+                                sh "dotnet-sonarscanner begin /k:${svc} /d:sonar.login=$SONAR_AUTH_TOKEN /d:sonar.host.url=http://172.31.1.74:9000"
+                                sh "dotnet build"
+                                sh "dotnet-sonarscanner end /d:sonar.login=$SONAR_AUTH_TOKEN"
                             }
                         }
                     }
@@ -95,10 +96,14 @@ pipeline {
                             def remotePath = "${REMOTE_BASE}/${svc}/${env.BUILD_NUMBER}"
 
                             // Create folder on test server
-                            sh "ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} 'mkdir -p ${remotePath}'"
+                            sh """
+                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "mkdir -p ${remotePath}"
+                            """
 
                             // Copy published files
-                            sh "scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/"
+                            sh """
+                                scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/
+                            """
 
                             // Create systemd service and restart
                             sh """
@@ -111,7 +116,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=${remotePath}
-ExecStart=/usr/lib/dotnet/dotnet ${remotePath}/${svc}.dll
+ExecStart=/snap/bin/dotnet ${remotePath}/${svc}.dll
 Restart=always
 RestartSec=5
 SyslogIdentifier=${svc}
