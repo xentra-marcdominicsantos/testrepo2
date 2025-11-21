@@ -72,10 +72,10 @@ pipeline {
             services.each { svc ->
                 dir(svc) {
                     withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_AUTH_TOKEN')]) {
-                        withSonarQubeEnv('SonarQubeServer') {
-                            sh "dotnet-sonarscanner begin /k:${svc} /d:sonar.login=${SONAR_AUTH_TOKEN} /d:sonar.host.url=http://172.31.1.74:9000"
+                        withSonarQubeEnv("${SONAR_SERVER}") {
+                            sh "dotnet-sonarscanner begin /k:\"${svc}\" /d:sonar.login=${SONAR_AUTH_TOKEN} /d:sonar.host.url=\"http://172.31.1.74:9000\""
                             sh 'dotnet build'
-                            sh "dotnet-sonarscanner end /d:sonar.login=${SONAR_AUTH_TOKEN} /d:sonar.host.url=http://172.31.1.74:9000"
+                            sh "dotnet-sonarscanner end /d:sonar.login=${SONAR_AUTH_TOKEN} /d:sonar.host.url=\"http://172.31.1.74:9000\""
                         }
                     }
                 }
@@ -83,7 +83,6 @@ pipeline {
         }
     }
 }
-
 
 
         stage('Deploy to Test Server') {
