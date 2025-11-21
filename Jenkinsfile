@@ -2,10 +2,11 @@ pipeline {
     agent any
 
     environment {
-        SONAR_SERVER = 'SonarQubeServer'  // name of SonarQube server in Jenkins
+        SONAR_SERVER = 'SonarQubeServer'          // SonarQube server name in Jenkins
         TEAMS_WEBHOOK = credentials('teams-webhook')
-        SSH_CRED_ID = 'jenkins-test-server-ssh'   // your SSH credential
-        REMOTE_BASE = '/opt/microservices'
+        SSH_CRED_ID = 'jenkins-test-server-ssh'  // SSH credential for test server
+        REMOTE_BASE = '/opt/microservices'       // Deployment base path
+        TEST_SERVER_IP = '172.31.7.79'
     }
 
     parameters {
@@ -24,11 +25,14 @@ pipeline {
         stage('Discover Microservices') {
             steps {
                 script {
-                    services = sh(
-                        script: "find . -name '*.csproj' | sed 's|./||' | awk -F/ '{print \$1}' | sort -u",
+                    // Ignore root-level .csproj
+                    def services = sh(
+                        script: "find . -mindepth 2 -name '*.csproj' | sed 's|./||' | awk -F/ '{print \$1}' | sort -u",
                         returnStdout: true
                     ).trim().split("\n")
                     echo "Detected services: ${services}"
+                    // Save for later stages
+                    env.SERVICES = services.join(',')
                 }
             }
         }
@@ -36,6 +40,7 @@ pipeline {
         stage('Build & Test (parallel)') {
             steps {
                 script {
+                    def services = env.SERVICES.split(',')
                     def branches = services.collectEntries { svc ->
                         ["${svc}": {
                             stage("Build & Test: ${svc}") {
@@ -56,6 +61,7 @@ pipeline {
         stage('SonarQube Scan') {
             steps {
                 script {
+                    def services = env.SERVICES.split(',')
                     services.each { svc ->
                         dir(svc) {
                             withSonarQubeEnv("${SONAR_SERVER}") {
@@ -72,28 +78,31 @@ pipeline {
         }
 
         stage('Deploy to Test Server') {
+            when {
+                expression { params.ENV == 'test' } // only deploy for test environment
+            }
             steps {
                 script {
+                    def services = env.SERVICES.split(',')
                     def services_to_deploy = (params.SERVICE == 'all') ? services : [params.SERVICE]
-                    echo "Deploying ${services_to_deploy} to test server ${params.TEST_SERVER_HOST ?: '172.31.7.79'}"
 
                     sshagent([env.SSH_CRED_ID]) {
                         services_to_deploy.each { svc ->
                             def remotePath = "${REMOTE_BASE}/${svc}/${env.BUILD_NUMBER}"
 
-                            // create folder on test server
+                            // Create folder on test server
                             sh """
-                                ssh -o StrictHostKeyChecking=no jenkins@172.31.7.79 "mkdir -p ${remotePath}"
+                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "mkdir -p ${remotePath}"
                             """
 
-                            // copy published files
+                            // Copy published files
                             sh """
-                                scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@172.31.7.79:${remotePath}/
+                                scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/
                             """
 
-                            // create systemd unit and restart service
+                            // Create systemd service and restart
                             sh """
-                                ssh -o StrictHostKeyChecking=no jenkins@172.31.7.79 'sudo bash -c "
+                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} 'sudo bash -c "
                                 UNIT_FILE=/etc/systemd/system/${svc}.service
                                 cat > \$UNIT_FILE <<EOL
 [Unit]
@@ -118,7 +127,7 @@ EOL
                                 systemctl status ${svc}.service --no-pager || true
                                 '"
                             """
-                            echo "${svc} deployed and restarted successfully."
+                            echo "${svc} deployed successfully."
                         }
                     }
                 }
