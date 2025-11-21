@@ -76,7 +76,6 @@ pipeline {
                                 sh "dotnet build"
                                 sh "dotnet-sonarscanner end /d:sonar.login=$SONAR_AUTH_TOKEN"
                             }
-                            }
                         }
                     }
                 }
