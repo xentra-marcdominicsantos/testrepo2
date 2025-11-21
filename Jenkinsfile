@@ -2,10 +2,11 @@ pipeline {
     agent any
 
     environment {
-        SONAR_SERVER = 'SonarQubeServer'          // SonarQube server name in Jenkins
+        PATH = "/snap/bin:${env.PATH}"   // Ensure Snap .NET SDK is in PATH
+        SONAR_SERVER = 'SonarQubeServer'          
         TEAMS_WEBHOOK = credentials('teams-webhook')
-        SSH_CRED_ID = 'jenkins-test-server-ssh'  // SSH credential for test server
-        REMOTE_BASE = '/opt/microservices'       // Deployment base path
+        SSH_CRED_ID = 'jenkins-test-server-ssh'  
+        REMOTE_BASE = '/opt/microservices'       
         TEST_SERVER_IP = '172.31.7.79'
     }
 
@@ -22,16 +23,20 @@ pipeline {
             }
         }
 
+        stage('Verify .NET Version') {
+            steps {
+                sh 'dotnet --version'
+            }
+        }
+
         stage('Discover Microservices') {
             steps {
                 script {
-                    // Ignore root-level .csproj
                     def services = sh(
                         script: "find . -mindepth 2 -name '*.csproj' | sed 's|./||' | awk -F/ '{print \$1}' | sort -u",
                         returnStdout: true
                     ).trim().split("\n")
                     echo "Detected services: ${services}"
-                    // Save for later stages
                     env.SERVICES = services.join(',')
                 }
             }
@@ -79,7 +84,7 @@ pipeline {
 
         stage('Deploy to Test Server') {
             when {
-                expression { params.ENV == 'test' } // only deploy for test environment
+                expression { params.ENV == 'test' }
             }
             steps {
                 script {
@@ -90,17 +95,11 @@ pipeline {
                         services_to_deploy.each { svc ->
                             def remotePath = "${REMOTE_BASE}/${svc}/${env.BUILD_NUMBER}"
 
-                            // Create folder on test server
                             sh """
                                 ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "mkdir -p ${remotePath}"
+                                scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/"
                             """
 
-                            // Copy published files
-                            sh """
-                                scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/
-                            """
-
-                            // Create systemd service and restart
                             sh """
                                 ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} 'sudo bash -c "
                                 UNIT_FILE=/etc/systemd/system/${svc}.service
@@ -111,7 +110,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=${remotePath}
-ExecStart=/usr/bin/dotnet ${remotePath}/${svc}.dll
+ExecStart=/snap/bin/dotnet ${remotePath}/${svc}.dll
 Restart=always
 RestartSec=5
 SyslogIdentifier=${svc}
@@ -133,7 +132,6 @@ EOL
                 }
             }
         }
-
     }
 
     post {
