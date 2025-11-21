@@ -74,9 +74,9 @@ pipeline {
                             withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_AUTH_TOKEN')]) {
                                 withSonarQubeEnv('SonarQubeServer') {
                                     sh """
-                                    dotnet-sonarscanner begin /k:${svc} /d:sonar.login=\$SONAR_AUTH_TOKEN /d:sonar.host.url=http://172.31.1.74:9000
+                                    dotnet-sonarscanner begin /k:${svc} /d:sonar.login=${SONAR_AUTH_TOKEN.trim()} /d:sonar.host.url=${env.SONAR_HOST_URL}
                                     dotnet build
-                                    dotnet-sonarscanner end /d:sonar.login=\$SONAR_AUTH_TOKEN /d:sonar.host.url=http://172.31.1.74:9000
+                                    dotnet-sonarscanner end /d:sonar.login=${SONAR_AUTH_TOKEN.trim()}
                                     """
                                 }
                             }
@@ -147,19 +147,19 @@ EOL
 
     post {
         always {
-            withCredentials([string(credentialsId: 'teams_webhook', variable: 'WEBHOOK')]) {
+            withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
                 office365ConnectorSend webhookUrl: "${WEBHOOK}",
                     message: "Jenkins pipeline completed for Build: ${BUILD_NUMBER} on ENV=${params.ENV}"
             }
         }
         failure {
-            withCredentials([string(credentialsId: 'teams_webhook', variable: 'WEBHOOK')]) {
+            withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
                 office365ConnectorSend webhookUrl: "${WEBHOOK}",
                     message: "❌ Jenkins pipeline FAILED for Build: ${BUILD_NUMBER}"
             }
         }
         success {
-            withCredentials([string(credentialsId: 'teams_webhook', variable: 'WEBHOOK')]) {
+            withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
                 office365ConnectorSend webhookUrl: "${WEBHOOK}",
                     message: "✅ Jenkins pipeline SUCCESS for Build: ${BUILD_NUMBER}"
             }
