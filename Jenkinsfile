@@ -144,17 +144,23 @@ EOL
     }
 
     post {
-        always {
-            office365ConnectorSend webhookUrl: TEAMS_WEBHOOK,
+    always {
+        withCredentials([string(credentialsId: 'TEAMS_WEBHOOK', variable: 'WEBHOOK')]) {
+            office365ConnectorSend webhookUrl: "${WEBHOOK}",
                 message: "Jenkins pipeline completed for Build: ${BUILD_NUMBER} on ENV=${params.ENV}"
         }
-        failure {
-            office365ConnectorSend webhookUrl: TEAMS_WEBHOOK,
+    }
+    failure {
+        withCredentials([string(credentialsId: 'TEAMS_WEBHOOK', variable: 'WEBHOOK')]) {
+            office365ConnectorSend webhookUrl: "${WEBHOOK}",
                 message: "❌ Jenkins pipeline FAILED for Build: ${BUILD_NUMBER}"
         }
-        success {
-            office365ConnectorSend webhookUrl: TEAMS_WEBHOOK,
+    }
+    success {
+        withCredentials([string(credentialsId: 'TEAMS_WEBHOOK', variable: 'WEBHOOK')]) {
+            office365ConnectorSend webhookUrl: "${WEBHOOK}",
                 message: "✅ Jenkins pipeline SUCCESS for Build: ${BUILD_NUMBER}"
         }
     }
 }
+
