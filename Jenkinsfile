@@ -9,7 +9,7 @@ pipeline {
         SSH_CRED_ID = 'jenkins-test-server-ssh'                  // SSH credential for test server
         REMOTE_BASE = '/opt/microservices'                       // Deployment base path
         TEST_SERVER_IP = '172.31.7.79'
-        SONAR_AUTH_TOKEN = credentials('sonarQube_token')
+        SONAR_AUTH_TOKEN = credentials('sonarQube-token')
     }
 
     parameters {
