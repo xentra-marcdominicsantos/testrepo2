@@ -66,23 +66,24 @@ pipeline {
         }
 
         stage('SonarQube Scan') {
-            steps {
-                script {
-                    def services = env.SERVICES.split(',')
-                    services.each { svc ->
-                        dir(svc) {
-                            withSonarQubeEnv("${SONAR_SERVER}") {
-                                sh """
-                                    dotnet-sonarscanner begin /k:"${svc}" /d:sonar.login="${env.SONAR_AUTH_TOKEN}"
-                                    dotnet build
-                                    dotnet-sonarscanner end /d:sonar.login="${env.SONAR_AUTH_TOKEN}"
-                                """
-                            }
-                        }
+    steps {
+        script {
+            def services = env.SERVICES.split(',')
+            services.each { svc ->
+                dir(svc) {
+                    withSonarQubeEnv("${SONAR_SERVER}") {
+                        sh """
+                            dotnet-sonarscanner begin /k:"${svc}" /d:sonar.login="${env.SONAR_AUTH_TOKEN}" /d:sonar.host.url="http://172.31.1.74:9000"
+                            dotnet build
+                            dotnet-sonarscanner end /d:sonar.login="${env.SONAR_AUTH_TOKEN}" /d:sonar.host.url="http://172.31.1.74:9000"
+                        """
                     }
                 }
             }
         }
+    }
+}
+
 
         stage('Deploy to Test Server') {
             when {
