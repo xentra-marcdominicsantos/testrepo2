@@ -2,12 +2,12 @@ pipeline {
     agent any
 
     environment {
-        PATH = "/snap/bin:${env.PATH}"          // Ensure Jenkins sees the Snap binaries
-        DOTNET_ROOT = "/snap/dotnet-sdk/current"
-        SONAR_SERVER = 'SonarQubeServer'        // SonarQube server name in Jenkins
+        PATH = "/snap/bin:/home/jenkins/.dotnet/tools:${env.PATH}" // Include Snap binaries + dotnet global tools
+        DOTNET_ROOT = "/snap/dotnet-sdk/current"                  // .NET root
+        SONAR_SERVER = 'SonarQubeServer'                          // SonarQube server name in Jenkins
         TEAMS_WEBHOOK = credentials('teams-webhook')
-        SSH_CRED_ID = 'jenkins-test-server-ssh' // SSH credential for test server
-        REMOTE_BASE = '/opt/microservices'      // Deployment base path
+        SSH_CRED_ID = 'jenkins-test-server-ssh'                  // SSH credential for test server
+        REMOTE_BASE = '/opt/microservices'                       // Deployment base path
         TEST_SERVER_IP = '172.31.7.79'
     }
 
@@ -26,7 +26,7 @@ pipeline {
 
         stage('Verify .NET Version') {
             steps {
-                sh '/snap/bin/dotnet --version'
+                sh 'dotnet --version'
             }
         }
 
@@ -51,10 +51,10 @@ pipeline {
                         ["${svc}": {
                             stage("Build & Test: ${svc}") {
                                 dir(svc) {
-                                    sh "/snap/bin/dotnet restore"
-                                    sh "/snap/bin/dotnet build -c Release"
-                                    sh "/snap/bin/dotnet test --no-build"
-                                    sh "/snap/bin/dotnet publish -c Release -o output/"
+                                    sh "dotnet restore"
+                                    sh "dotnet build -c Release"
+                                    sh "dotnet test --no-build"
+                                    sh "dotnet publish -c Release -o output/"
                                 }
                             }
                         }]
@@ -72,9 +72,9 @@ pipeline {
                         dir(svc) {
                             withSonarQubeEnv("${SONAR_SERVER}") {
                                 sh """
-                                    /snap/bin/dotnet sonarscanner begin /k:"${svc}" /d:sonar.login="${env.SONAR_AUTH_TOKEN}"
-                                    /snap/bin/dotnet build
-                                    /snap/bin/dotnet sonarscanner end /d:sonar.login="${env.SONAR_AUTH_TOKEN}"
+                                    dotnet-sonarscanner begin /k:"${svc}" /d:sonar.login="${env.SONAR_AUTH_TOKEN}"
+                                    dotnet build
+                                    dotnet-sonarscanner end /d:sonar.login="${env.SONAR_AUTH_TOKEN}"
                                 """
                             }
                         }
@@ -139,6 +139,7 @@ EOL
                 }
             }
         }
+
     }
 
     post {
