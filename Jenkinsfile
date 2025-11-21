@@ -83,17 +83,23 @@ pipeline {
         }
 
         stage('Deploy to Test Server') {
-            when {
-                expression { params.ENV == 'test' }
-            }
+            when { expression { params.ENV == 'test' } }
             steps {
                 script {
+                    // Assign unique ports for each service
+                    def servicePorts = [
+                        "service-a": 5000,
+                        "service-b": 5001,
+                        "service-c": 5002
+                    ]
+
                     def services = env.SERVICES.split(',')
                     def services_to_deploy = (params.SERVICE == 'all') ? services : [params.SERVICE]
 
                     sshagent([env.SSH_CRED_ID]) {
                         services_to_deploy.each { svc ->
                             def remotePath = "${REMOTE_BASE}/${svc}/${env.BUILD_NUMBER}"
+                            def port = servicePorts[svc]
 
                             // Create folder on test server
                             sh """
@@ -105,10 +111,10 @@ pipeline {
                                 scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/
                             """
 
-                            // Create systemd service and restart
+                            // Create systemd service with unique port
                             sh """
 ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
-sudo tee /etc/systemd/system/${svc}.service >/dev/null << 'EOF'
+sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
 [Unit]
 Description=${svc} .NET Service
 After=network.target
@@ -133,7 +139,7 @@ sudo systemctl restart ${svc}.service
 sudo systemctl status ${svc}.service --no-pager || true
 "
 """
-                            echo "${svc} deployed successfully."
+                            echo "${svc} deployed successfully on port ${port}."
                         }
                     }
                 }
