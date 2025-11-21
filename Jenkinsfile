@@ -121,6 +121,7 @@ RestartSec=5
 SyslogIdentifier=${svc}
 User=jenkins
 Environment=ASPNETCORE_ENVIRONMENT=${params.ENV}
+Environment=ASPNETCORE_URLS=http://0.0.0.0:${port}
 
 [Install]
 WantedBy=multi-user.target
