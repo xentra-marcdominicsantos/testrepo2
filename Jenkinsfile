@@ -71,7 +71,7 @@ pipeline {
                     def services = env.SERVICES.split(',')
                     services.each { svc ->
                         dir(svc) {
-                            withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_AUTH_TOKEN')]) {
+                            withCredentials([string(credentialsId: 'sonarQube_token', variable: 'SONAR_AUTH_TOKEN')]) {
                                 withSonarQubeEnv('SonarQubeServer') {
                                     sh """
                                     dotnet-sonarscanner begin /k:${svc} /d:sonar.login="${SONAR_AUTH_TOKEN}" /d:sonar.host.url=http://172.31.1.74:9000
