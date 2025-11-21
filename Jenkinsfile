@@ -74,9 +74,9 @@ pipeline {
                             withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_AUTH_TOKEN')]) {
                                 withSonarQubeEnv('SonarQubeServer') {
                                     sh """
-                                    dotnet-sonarscanner begin /k:${svc} /d:sonar.login=${SONAR_AUTH_TOKEN.trim()} /d:sonar.host.url=${env.SONAR_HOST_URL}
+                                    dotnet-sonarscanner begin /k:${svc} /d:sonar.login="${SONAR_AUTH_TOKEN}" /d:sonar.host.url=http://172.31.1.74:9000
                                     dotnet build
-                                    dotnet-sonarscanner end /d:sonar.login=${SONAR_AUTH_TOKEN.trim()}
+                                    dotnet-sonarscanner end /d:sonar.login="${SONAR_AUTH_TOKEN}"
                                     """
                                 }
                             }
