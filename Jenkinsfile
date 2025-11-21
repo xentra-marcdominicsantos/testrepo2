@@ -107,31 +107,33 @@ pipeline {
 
                             // Create systemd service and restart
                             sh """
-                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} 'sudo bash -c "
-                                UNIT_FILE=/etc/systemd/system/${svc}.service
-                                cat > \$UNIT_FILE <<EOL
-[Unit]
-Description=${svc} .NET Service
-After=network.target
-
-[Service]
-WorkingDirectory=${remotePath}
-ExecStart=/snap/bin/dotnet ${remotePath}/${svc}.dll
-Restart=always
-RestartSec=5
-SyslogIdentifier=${svc}
-User=jenkins
-Environment=ASPNETCORE_ENVIRONMENT=${params.ENV}
-
-[Install]
-WantedBy=multi-user.target
-EOL
-                                systemctl daemon-reload
-                                systemctl enable ${svc}.service
-                                systemctl restart ${svc}.service
-                                systemctl status ${svc}.service --no-pager || true
-                                '"
+                            ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
+                            sudo tee /etc/systemd/system/${svc}.service > /dev/null << ''EOF''
+                            
+                            [Unit]
+                            Description=${svc} .NET Service
+                            After=network.target
+                            
+                            [Service]
+                            WorkingDirectory=${remotePath}
+                            ExecStart=/usr/lib/dotnet/dotnet ${remotePath}/${svc}.dll
+                            Restart=always
+                            RestartSec=5
+                            SyslogIdentifier=${svc}
+                            User=jenkins
+                            Environment=ASPNETCORE_ENVIRONMENT=${params.ENV}
+                            
+                            [Install]
+                            WantedBy=multi-user.target
+                            EOF
+                            
+                            sudo systemctl daemon-reload
+                            sudo systemctl enable ${svc}.service
+                            sudo systemctl restart ${svc}.service
+                            sudo systemctl status ${svc}.service --no-pager || true
+                            '
                             """
+
                             echo "${svc} deployed successfully."
                         }
                     }
