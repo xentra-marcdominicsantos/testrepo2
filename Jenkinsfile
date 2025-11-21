@@ -2,12 +2,12 @@ pipeline {
     agent any
 
     environment {
-        PATH = "/snap/bin:/home/jenkins/.dotnet/tools:${env.PATH}" // Include Snap binaries + dotnet global tools
-        DOTNET_ROOT = "/snap/dotnet-sdk/current"                  // .NET root
-        SONAR_SERVER = 'SonarQubeServer'                          // SonarQube server name in Jenkins
+        PATH = "/home/jenkins/.dotnet/tools:/snap/bin:${env.PATH}"  // include dotnet global tools
+        DOTNET_ROOT = "/snap/dotnet-sdk/current"
+        SONAR_SERVER = 'SonarQubeServer'        // SonarQube server name in Jenkins
         TEAMS_WEBHOOK = credentials('teams-webhook')
-        SSH_CRED_ID = 'jenkins-test-server-ssh'                  // SSH credential for test server
-        REMOTE_BASE = '/opt/microservices'                       // Deployment base path
+        SSH_CRED_ID = 'jenkins-test-server-ssh' // SSH credential for test server
+        REMOTE_BASE = '/opt/microservices'      // Deployment base path
         TEST_SERVER_IP = '172.31.7.79'
     }
 
@@ -34,7 +34,7 @@ pipeline {
             steps {
                 script {
                     def services = sh(
-                        script: "find . -mindepth 2 -name '*.csproj' | sed 's|./||' | awk -F/ '{print \$1}' | sort -u",
+                        script: "find . -mindepth 2 -name '*.csproj' | awk -F/ '{print \$1}' | sort -u | sed 's|./||'",
                         returnStdout: true
                     ).trim().split("\n")
                     echo "Detected services: ${services}"
@@ -51,10 +51,10 @@ pipeline {
                         ["${svc}": {
                             stage("Build & Test: ${svc}") {
                                 dir(svc) {
-                                    sh "dotnet restore"
-                                    sh "dotnet build -c Release"
-                                    sh "dotnet test --no-build"
-                                    sh "dotnet publish -c Release -o output/"
+                                    sh 'dotnet restore'
+                                    sh 'dotnet build -c Release'
+                                    sh 'dotnet test --no-build'
+                                    sh 'dotnet publish -c Release -o output/'
                                 }
                             }
                         }]
@@ -96,17 +96,9 @@ pipeline {
                         services_to_deploy.each { svc ->
                             def remotePath = "${REMOTE_BASE}/${svc}/${env.BUILD_NUMBER}"
 
-                            // Create folder on test server
-                            sh """
-                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "mkdir -p ${remotePath}"
-                            """
+                            sh "ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} 'mkdir -p ${remotePath}'"
+                            sh "scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/"
 
-                            // Copy published files
-                            sh """
-                                scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/
-                            """
-
-                            // Create systemd service and restart
                             sh """
                                 ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} 'sudo bash -c "
                                 UNIT_FILE=/etc/systemd/system/${svc}.service
@@ -139,7 +131,6 @@ EOL
                 }
             }
         }
-
     }
 
     post {
