@@ -1,12 +1,6 @@
 pipeline {
     agent any
-    
-    options {
-        buildDiscarder(logRotator(numToKeepStr: '2'))
-        // Optional: keep last 30 days
-        // buildDiscarder(logRotator(daysToKeepStr: '30', numToKeepStr: '10'))
-    }
-    
+        
     environment {
         PATH = "/snap/bin:/home/jenkins/.dotnet/tools:${env.PATH}" // Include Snap binaries + dotnet global tools
         DOTNET_ROOT = "/snap/dotnet-sdk/current"                  // .NET root
@@ -88,6 +82,29 @@ pipeline {
             }
         }
 
+        stage('Cleanup old builds on Test Server') {
+            when { expression { params.ENV == 'test' } }
+            steps {
+                script {
+                    def services = env.SERVICES.split(',')
+                    def services_to_deploy = (params.SERVICE == 'all') ? services : [params.SERVICE]
+                    
+            sshagent([env.SSH_CRED_ID]) {
+                services_to_deploy.each { svc ->
+                    // Keep only the last 2 builds
+                    sh """
+                        ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
+                            cd ${REMOTE_BASE}/${svc} &&
+                            ls -1dt */ | tail -n +3 | xargs -r rm -rf
+                        '
+                    """
+                }
+            }
+        }
+    }
+}
+
+        
         stage('Deploy to Test Server') {
             when { expression { params.ENV == 'test' } }
             steps {
@@ -119,32 +136,33 @@ pipeline {
 
                             // Create systemd service with unique port
                             sh """
-ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
-sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
-[Unit]
-Description=${svc} .NET Service
-After=network.target
-
-[Service]
-WorkingDirectory=${remotePath}
-ExecStart=/usr/lib/dotnet/dotnet ${remotePath}/${svc}.dll
-Restart=always
-RestartSec=5
-SyslogIdentifier=${svc}
-User=jenkins
-Environment=ASPNETCORE_ENVIRONMENT=${params.ENV}
-Environment=ASPNETCORE_URLS=http://0.0.0.0:${port}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable ${svc}.service
-sudo systemctl restart ${svc}.service
-sudo systemctl status ${svc}.service --no-pager || true
-"
-"""
+                            ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
+                            sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
+                            
+                            [Unit]
+                            Description=${svc} .NET Service
+                            After=network.target
+                            
+                            [Service]
+                            WorkingDirectory=${remotePath}
+                            ExecStart=/usr/lib/dotnet/dotnet ${remotePath}/${svc}.dll
+                            Restart=always
+                            RestartSec=5
+                            SyslogIdentifier=${svc}
+                            User=jenkins
+                            Environment=ASPNETCORE_ENVIRONMENT=${params.ENV}
+                            Environment=ASPNETCORE_URLS=http://0.0.0.0:${port}
+                            
+                            [Install]
+                            WantedBy=multi-user.target
+                            EOF
+                            
+                            sudo systemctl daemon-reload
+                            sudo systemctl enable ${svc}.service
+                            sudo systemctl restart ${svc}.service
+                            sudo systemctl status ${svc}.service --no-pager || true
+                            "
+                            """
                             echo "${svc} deployed successfully on port ${port}."
                         }
                     }
