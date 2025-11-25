@@ -1,6 +1,12 @@
 pipeline {
     agent any
-
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        // Optional: keep last 30 days
+        // buildDiscarder(logRotator(daysToKeepStr: '30', numToKeepStr: '10'))
+    }
+    
     environment {
         PATH = "/snap/bin:/home/jenkins/.dotnet/tools:${env.PATH}" // Include Snap binaries + dotnet global tools
         DOTNET_ROOT = "/snap/dotnet-sdk/current"                  // .NET root
