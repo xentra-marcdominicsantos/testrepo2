@@ -2,7 +2,7 @@ pipeline {
     agent any
     
     options {
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+        buildDiscarder(logRotator(numToKeepStr: '2'))
         // Optional: keep last 30 days
         // buildDiscarder(logRotator(daysToKeepStr: '30', numToKeepStr: '10'))
     }
