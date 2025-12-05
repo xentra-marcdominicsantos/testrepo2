@@ -16,7 +16,7 @@ pipeline {
         string(
             name: 'ROLLBACK_BUILD',
             defaultValue: '',
-            description: 'Will be auto-populated after Jenkins detects previous builds'
+            description: 'Leave empty to automatically pick latest build'
         )
     }
 
@@ -25,29 +25,32 @@ pipeline {
         stage('Get Previous Builds') {
             steps {
                 script {
-                    // Get list of available builds for the selected service
+                    // Fetch list of builds from remote server
                     def buildsRaw = sh(
                         script: "ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} ls -1 ${REMOTE_BASE}/${params.SERVICE}",
                         returnStdout: true
                     ).trim().split('\n')
 
-                    // Convert to String and sort descending
-                    def builds = buildsRaw.collect { it.toString() }.sort { a, b -> b.toInteger() <=> a.toInteger() }
+                    // Convert to string and filter out empty entries
+                    def builds = buildsRaw.collect { it.toString().trim() }.findAll { it }
 
-                    if (builds.isEmpty()) {
+                    if (!builds || builds.size() == 0) {
                         error "No previous builds found for ${params.SERVICE}"
                     }
 
+                    // Sort numerically descending (latest first)
+                    builds.sort { a, b -> b.toInteger() <=> a.toInteger() }
+
                     echo "Available builds for ${params.SERVICE}: ${builds}"
 
-                    // Set default rollback build if not manually specified
-                    if (!params.ROLLBACK_BUILD) {
-                        currentBuild.description = "Rolling back ${params.SERVICE} to build ${builds[0]}"
+                    // Pick latest build if ROLLBACK_BUILD is empty
+                    if (!params.ROLLBACK_BUILD?.trim()) {
                         env.ROLLBACK_BUILD = builds[0]
                     } else {
                         env.ROLLBACK_BUILD = params.ROLLBACK_BUILD
                     }
 
+                    currentBuild.description = "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
                     echo "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
                 }
             }
@@ -63,7 +66,7 @@ pipeline {
                     sshagent([env.SSH_CRED_ID]) {
                         sh """
                         ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
-                        sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
+sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
 [Unit]
 Description=${svc} .NET Service
 After=network.target
@@ -82,13 +85,14 @@ Environment=ASPNETCORE_URLS=http://0.0.0.0:5000
 WantedBy=multi-user.target
 EOF
 
-                        sudo systemctl daemon-reload
-                        sudo systemctl enable ${svc}.service
-                        sudo systemctl restart ${svc}.service
-                        sudo systemctl status ${svc}.service --no-pager || true
-                        "
+sudo systemctl daemon-reload
+sudo systemctl enable ${svc}.service
+sudo systemctl restart ${svc}.service
+sudo systemctl status ${svc}.service --no-pager || true
+"
                         """
                     }
+
                     echo "${svc} rolled back successfully to build ${buildNum}."
                 }
             }
