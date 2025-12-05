@@ -2,8 +2,8 @@ pipeline {
     agent any
         
     environment {
-        PATH = "/snap/bin:/home/jenkins/.dotnet/tools:${env.PATH}" // Include Snap binaries + dotnet global tools
-        DOTNET_ROOT = "/snap/dotnet-sdk/current"                  // .NET root
+        PATH = "/home/jenkins/.dotnet/tools:${env.PATH}"         // Include Snap binaries + dotnet global tools
+        DOTNET_ROOT = "/usr/lib/dotnet"                             // .NET root
         SONAR_SERVER = 'SonarQubeServer'                          // SonarQube server name in Jenkins
         SSH_CRED_ID = 'jenkins-test-server-ssh'                  // SSH credential for test server
         REMOTE_BASE = '/opt/microservices'                       // Deployment base path
