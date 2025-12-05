@@ -12,7 +12,7 @@ pipeline {
 
     parameters {
         choice(name: 'ENV', choices: ['test'], description: 'Environment to deploy')
-        choice(name: 'SERVICE', choices: ['all', 'service-a', 'service-b', 'service-c', 'service-d'], description: 'Choose microservice to deploy')
+        choice(name: 'SERVICE', choices: ['all', 'service-a', 'service-b', 'service-c'], description: 'Choose microservice to deploy')
     }
 
     stages {
@@ -113,8 +113,7 @@ pipeline {
             def servicePorts = [
                 "service-a": 5000,
                 "service-b": 5001,
-                "service-c": 5002,
-                "service-d": 5003
+                "service-c": 5002
             ]
 
             def services = env.SERVICES.split(',')
