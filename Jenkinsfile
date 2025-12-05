@@ -12,7 +12,7 @@ pipeline {
 
     parameters {
         choice(name: 'ENV', choices: ['test'], description: 'Environment to deploy')
-        choice(name: 'SERVICE', choices: ['all', 'service-a', 'service-b', 'service-c'], description: 'Choose microservice to deploy')
+        choice(name: 'SERVICE', choices: ['all', 'service-a', 'service-b', 'service-c', 'service-d'], description: 'Choose microservice to deploy')
     }
 
     stages {
