@@ -13,6 +13,7 @@ pipeline {
     parameters {
         choice(name: 'ENV', choices: ['test'], description: 'Environment to deploy')
         choice(name: 'SERVICE', choices: ['all', 'service-a', 'service-b', 'service-c'], description: 'Choose microservice to deploy')
+        choice(name: 'ROLLBACK_BUILD', choices: ['none', '101', '102', '103'], description: 'Select a previous build to rollback to, or "none" for current build')
     }
 
     stages {
