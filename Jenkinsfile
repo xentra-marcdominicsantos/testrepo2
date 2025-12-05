@@ -1,17 +1,17 @@
 pipeline {
     agent any
-	
+        
     environment {
-        PATH = "/snap/bin:/home/jenkins/.dotnet/tools:${env.PATH}" 		// Include Snap binaries + dotnet global tools
-        DOTNET_ROOT = "/snap/dotnet-sdk/current"	                	// .NET root
-        SONAR_SERVER = 'SonarQubeServer'                        		// Server name of SonarQube in Jenkins Controller located at the settings - system
-        SSH_CRED_ID = 'jenkins-test-server-ssh'                  		// SSH credential for test server
-        REMOTE_BASE = '/opt/microservices'                      		// Deployment base path (what is the exact location, can be /opt/website or anything)
-        TEST_SERVER_IP = '172.31.7.79'									// IP of the TARGET SERVER
+        PATH = "/snap/bin:/home/jenkins/.dotnet/tools:${env.PATH}" // Include Snap binaries + dotnet global tools
+        DOTNET_ROOT = "/snap/dotnet-sdk/current"                  // .NET root
+        SONAR_SERVER = 'SonarQubeServer'                          // SonarQube server name in Jenkins
+        SSH_CRED_ID = 'jenkins-test-server-ssh'                  // SSH credential for test server
+        REMOTE_BASE = '/opt/microservices'                       // Deployment base path
+        TEST_SERVER_IP = '172.31.7.79'
     }
 
     parameters {
-        choice(name: 'ENV', choices: ['test'], description: 'Environment to deploy')  // since we will only deploy at prod, we will change this to just prod
+        choice(name: 'ENV', choices: ['test'], description: 'Environment to deploy')
         choice(name: 'SERVICE', choices: ['all', 'service-a', 'service-b', 'service-c'], description: 'Choose microservice to deploy')
     }
 
@@ -82,12 +82,12 @@ pipeline {
             }
         }
 
-		stage('Cleanup old builds on Test Server') {
+        stage('Cleanup old builds on Test Server') {
             when { expression { params.ENV == 'test' } }
-				steps {
-					script {
-						def services = env.SERVICES.split(',')
-						def services_to_deploy = (params.SERVICE == 'all') ? services : [params.SERVICE]
+            steps {
+                script {
+                    def services = env.SERVICES.split(',')
+                    def services_to_deploy = (params.SERVICE == 'all') ? services : [params.SERVICE]
                     
             sshagent([env.SSH_CRED_ID]) {
                 services_to_deploy.each { svc ->
@@ -96,9 +96,6 @@ pipeline {
                         ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
                             cd ${REMOTE_BASE}/${svc} &&
                             ls -1dt */ | tail -n +3 | xargs -r rm -rf
-							//ls -1dt */ → lists folders in reverse chronological order (latest first)
-							//tail -n +3 → skips the 2 newest folders, selects the rest
-							//xargs -r rm -rf → deletes them
                         '
                     """
                 }
@@ -107,7 +104,7 @@ pipeline {
     }
 }
 
-
+        
         stage('Deploy to Test Server') {
             when { expression { params.ENV == 'test' } }
             steps {
@@ -139,32 +136,33 @@ pipeline {
 
                             // Create systemd service with unique port
                             sh """
-ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
-sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
-[Unit]
-Description=${svc} .NET Service
-After=network.target
-
-[Service]
-WorkingDirectory=${remotePath}
-ExecStart=/usr/lib/dotnet/dotnet ${remotePath}/${svc}.dll
-Restart=always
-RestartSec=5
-SyslogIdentifier=${svc}
-User=jenkins
-Environment=ASPNETCORE_ENVIRONMENT=${params.ENV}
-Environment=ASPNETCORE_URLS=http://0.0.0.0:${port}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable ${svc}.service
-sudo systemctl restart ${svc}.service
-sudo systemctl status ${svc}.service --no-pager || true
-"
-"""
+                            ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
+                            sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
+                            
+                            [Unit]
+                            Description=${svc} .NET Service
+                            After=network.target
+                            
+                            [Service]
+                            WorkingDirectory=${remotePath}
+                            ExecStart=/usr/lib/dotnet/dotnet ${remotePath}/${svc}.dll
+                            Restart=always
+                            RestartSec=5
+                            SyslogIdentifier=${svc}
+                            User=jenkins
+                            Environment=ASPNETCORE_ENVIRONMENT=${params.ENV}
+                            Environment=ASPNETCORE_URLS=http://0.0.0.0:${port}
+                            
+                            [Install]
+                            WantedBy=multi-user.target
+                            EOF
+                            
+                            sudo systemctl daemon-reload
+                            sudo systemctl enable ${svc}.service
+                            sudo systemctl restart ${svc}.service
+                            sudo systemctl status ${svc}.service --no-pager || true
+                            "
+                            """
                             echo "${svc} deployed successfully on port ${port}."
                         }
                     }
