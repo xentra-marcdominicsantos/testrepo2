@@ -1,6 +1,6 @@
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-app.MapGet("/", () => "This is another fckin try");
+app.MapGet("/", () => "this is another commit");
 
 app.Run();
