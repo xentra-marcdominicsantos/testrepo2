@@ -13,42 +13,42 @@ pipeline {
             choices: ['service-a', 'service-b', 'service-c'],
             description: 'Which service to rollback'
         )
-        choice(
+        string(
             name: 'ROLLBACK_BUILD',
-            choices: [''], // Will be updated dynamically in script
-            description: 'Select previous build to rollback'
+            defaultValue: '',
+            description: 'Will be auto-populated after Jenkins detects previous builds'
         )
     }
 
     stages {
+
         stage('Get Previous Builds') {
             steps {
                 script {
-                    // Fetch builds from server
+                    // Get list of available builds for the selected service
                     def buildsRaw = sh(
                         script: "ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} ls -1 ${REMOTE_BASE}/${params.SERVICE}",
                         returnStdout: true
                     ).trim().split('\n')
 
-                    // Convert to strings and sort descending (newest first)
-                    def builds = buildsRaw.collect { it.toString() }.sort(false) { a, b ->
-                        b.toInteger() <=> a.toInteger()
-                    }
+                    // Convert to String and sort descending
+                    def builds = buildsRaw.collect { it.toString() }.sort { a, b -> b.toInteger() <=> a.toInteger() }
 
-                    if (!builds || builds.size() == 0) {
+                    if (builds.isEmpty()) {
                         error "No previous builds found for ${params.SERVICE}"
                     }
 
                     echo "Available builds for ${params.SERVICE}: ${builds}"
 
-                    // Update environment variable with default rollback
-                    env.ROLLBACK_BUILD = builds[0]
-                    echo "Default rollback build: ${env.ROLLBACK_BUILD}"
+                    // Set default rollback build if not manually specified
+                    if (!params.ROLLBACK_BUILD) {
+                        currentBuild.description = "Rolling back ${params.SERVICE} to build ${builds[0]}"
+                        env.ROLLBACK_BUILD = builds[0]
+                    } else {
+                        env.ROLLBACK_BUILD = params.ROLLBACK_BUILD
+                    }
 
-                    // Dynamically update Jenkins choice parameter
-                    def job = Jenkins.instance.getItemByFullName(env.JOB_NAME)
-                    def prop = job.getProperty(org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject.class)
-                    // Alternatively, just show echo in console; dynamic parameter update requires plugin
+                    echo "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
                 }
             }
         }
@@ -89,7 +89,6 @@ EOF
                         "
                         """
                     }
-
                     echo "${svc} rolled back successfully to build ${buildNum}."
                 }
             }
@@ -98,7 +97,7 @@ EOF
 
     post {
         success {
-            echo "Rollback completed successfully."
+            echo "Rollback pipeline completed successfully."
         }
         failure {
             echo "Rollback pipeline failed."
