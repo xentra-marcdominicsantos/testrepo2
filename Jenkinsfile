@@ -13,7 +13,6 @@ pipeline {
     parameters {
         choice(name: 'ENV', choices: ['test'], description: 'Environment to deploy')
         choice(name: 'SERVICE', choices: ['all', 'service-a', 'service-b', 'service-c'], description: 'Choose microservice to deploy')
-        choice(name: 'ROLLBACK_BUILD', choices: ['none', '101', '102', '103'], description: 'Select a previous build to rollback to, or "none" for current build')
     }
 
     stages {
@@ -118,64 +117,55 @@ pipeline {
                     ]
 
                     def services = env.SERVICES.split(',')
-def services_to_deploy = (params.SERVICE == 'all') ? services : [params.SERVICE]
+                    def services_to_deploy = (params.SERVICE == 'all') ? services : [params.SERVICE]
 
-// Determine which build to deploy: rollback or current
-def buildToDeploy = (params.ROLLBACK_BUILD && params.ROLLBACK_BUILD != 'none') ? params.ROLLBACK_BUILD : env.BUILD_NUMBER
+                    sshagent([env.SSH_CRED_ID]) {
+                        services_to_deploy.each { svc ->
+                            def remotePath = "${REMOTE_BASE}/${svc}/${env.BUILD_NUMBER}"
+                            def port = servicePorts[svc]
 
-sshagent([env.SSH_CRED_ID]) {
-    services_to_deploy.each { svc ->
+                            // Create folder on test server
+                            sh """
+                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "mkdir -p ${remotePath}"
+                            """
 
-        def remotePath = "${REMOTE_BASE}/${svc}/${buildToDeploy}"
-        def port = servicePorts[svc]
+                            // Copy published files
+                            sh """
+                                scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/
+                            """
 
-        // Only copy files if deploying the current build
-        if (buildToDeploy == env.BUILD_NUMBER) {
-            // Create folder on test server
-            sh """
-            ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "mkdir -p ${remotePath}"
-            """
-            
-            // Copy published files
-            sh """
-            scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/
-            """
-        }
-
-        // Create systemd service
-        sh """
-        ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
-        sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
-
-        [Unit]
-        Description=${svc} .NET Service
-        After=network.target
-
-        [Service]
-        WorkingDirectory=${remotePath}
-        ExecStart=/usr/lib/dotnet/dotnet ${remotePath}/${svc}.dll
-        Restart=always
-        RestartSec=5
-        SyslogIdentifier=${svc}
-        User=jenkins
-        Environment=ASPNETCORE_ENVIRONMENT=${params.ENV}
-        Environment=ASPNETCORE_URLS=http://0.0.0.0:${port}
-
-        [Install]
-        WantedBy=multi-user.target
-        EOF
-
-        sudo systemctl daemon-reload
-        sudo systemctl enable ${svc}.service
-        sudo systemctl restart ${svc}.service
-        sudo systemctl status ${svc}.service --no-pager || true
-        "
-        """
-
-        echo "${svc} deployed successfully from build ${buildToDeploy} on port ${port}."
-    }
-}
-
+                            // Create systemd service with unique port
+                            sh """
+                            ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
+                            sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
+                            
+                            [Unit]
+                            Description=${svc} .NET Service
+                            After=network.target
+                            
+                            [Service]
+                            WorkingDirectory=${remotePath}
+                            ExecStart=/usr/lib/dotnet/dotnet ${remotePath}/${svc}.dll
+                            Restart=always
+                            RestartSec=5
+                            SyslogIdentifier=${svc}
+                            User=jenkins
+                            Environment=ASPNETCORE_ENVIRONMENT=${params.ENV}
+                            Environment=ASPNETCORE_URLS=http://0.0.0.0:${port}
+                            
+                            [Install]
+                            WantedBy=multi-user.target
+                            EOF
+                            
+                            sudo systemctl daemon-reload
+                            sudo systemctl enable ${svc}.service
+                            sudo systemctl restart ${svc}.service
+                            sudo systemctl status ${svc}.service --no-pager || true
+                            "
+                            """
+                            echo "${svc} deployed successfully on port ${port}."
+                        }
+                    }
                 }
             }
         }
