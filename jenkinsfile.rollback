@@ -1,0 +1,102 @@
+pipeline {
+    agent any
+
+    environment {
+        SSH_CRED_ID = 'jenkins-test-server-ssh'
+        REMOTE_BASE = '/opt/microservices'
+        TEST_SERVER_IP = '172.31.7.79'
+    }
+
+    parameters {
+        choice(
+            name: 'SERVICE', 
+            choices: ['service-a', 'service-b', 'service-c'], 
+            description: 'Which microservice to rollback'
+        )
+        // ROLLBACK_BUILD will be populated dynamically in the first stage
+        string(name: 'ROLLBACK_BUILD', defaultValue: '', description: 'Which previous build to rollback to')
+    }
+
+    stages {
+        stage('Get Previous Builds') {
+            steps {
+                script {
+                    def svc = params.SERVICE
+                    // Get the list of build folders on the remote server
+                    def builds = sh(
+                        script: """ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} 'ls -1 ${REMOTE_BASE}/${svc}'""",
+                        returnStdout: true
+                    ).trim().split("\n")
+
+                    echo "Available builds for ${svc}: ${builds}"
+                    
+                    if (!builds) {
+                        error "No previous builds found for ${svc}!"
+                    }
+
+                    // Sort descending to show newest first
+                    builds = builds.sort { a, b -> b.toInteger() <=> a.toInteger() }
+                    env.AVAILABLE_BUILDS = builds.join(',')
+                }
+            }
+        }
+
+        stage('Rollback Microservice') {
+            steps {
+                script {
+                    def svc = params.SERVICE
+                    def selectedBuild = params.ROLLBACK_BUILD
+
+                    if (!selectedBuild) {
+                        // If not manually entered, pick the latest previous build
+                        selectedBuild = env.AVAILABLE_BUILDS.split(',')[0]
+                        echo "No rollback build specified. Using latest: ${selectedBuild}"
+                    }
+
+                    def remotePath = "${REMOTE_BASE}/${svc}/${selectedBuild}"
+                    def port = [ "service-a": 5000, "service-b": 5001, "service-c": 5002 ][svc]
+
+                    sshagent([env.SSH_CRED_ID]) {
+                        sh """
+ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
+sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
+[Unit]
+Description=${svc} .NET Service
+After=network.target
+
+[Service]
+WorkingDirectory=${remotePath}
+ExecStart=/usr/lib/dotnet/dotnet ${remotePath}/${svc}.dll
+Restart=always
+RestartSec=5
+SyslogIdentifier=${svc}
+User=jenkins
+Environment=ASPNETCORE_ENVIRONMENT=test
+Environment=ASPNETCORE_URLS=http://0.0.0.0:${port}
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable ${svc}.service
+sudo systemctl restart ${svc}.service
+sudo systemctl status ${svc}.service --no-pager || true
+"
+                        """
+                    }
+
+                    echo "${svc} rolled back to build ${selectedBuild} on port ${port}."
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Rollback pipeline finished successfully."
+        }
+        failure {
+            echo "Rollback pipeline failed."
+        }
+    }
+}
