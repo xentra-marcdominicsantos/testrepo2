@@ -113,7 +113,8 @@ pipeline {
             def servicePorts = [
                 "service-a": 5000,
                 "service-b": 5001,
-                "service-c": 5002
+                "service-c": 5002,
+                "service-d": 5003
             ]
 
             def services = env.SERVICES.split(',')
