@@ -9,34 +9,46 @@ pipeline {
 
     parameters {
         choice(
-            name: 'SERVICE', 
-            choices: ['service-a', 'service-b', 'service-c'], 
-            description: 'Which microservice to rollback'
+            name: 'SERVICE',
+            choices: ['service-a', 'service-b', 'service-c'],
+            description: 'Which service to rollback'
         )
-        // ROLLBACK_BUILD will be populated dynamically in the first stage
-        string(name: 'ROLLBACK_BUILD', defaultValue: '', description: 'Which previous build to rollback to')
+        string(
+            name: 'ROLLBACK_BUILD',
+            defaultValue: '',
+            description: 'Will be auto-populated after Jenkins detects previous builds'
+        )
     }
 
     stages {
+
         stage('Get Previous Builds') {
             steps {
                 script {
-                    def svc = params.SERVICE
-                    // Get the list of build folders on the remote server
-                    def builds = sh(
-                        script: """ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} 'ls -1 ${REMOTE_BASE}/${svc}'""",
+                    // Get list of available builds for the selected service
+                    def buildsRaw = sh(
+                        script: "ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} ls -1 ${REMOTE_BASE}/${params.SERVICE}",
                         returnStdout: true
-                    ).trim().split("\n")
+                    ).trim().split('\n')
 
-                    echo "Available builds for ${svc}: ${builds}"
-                    
-                    if (!builds) {
-                        error "No previous builds found for ${svc}!"
+                    // Convert to String and sort descending
+                    def builds = buildsRaw.collect { it.toString() }.sort { a, b -> b.toInteger() <=> a.toInteger() }
+
+                    if (builds.isEmpty()) {
+                        error "No previous builds found for ${params.SERVICE}"
                     }
 
-                    // Sort descending to show newest first
-                    builds = builds.sort { a, b -> b.toInteger() <=> a.toInteger() }
-                    env.AVAILABLE_BUILDS = builds.join(',')
+                    echo "Available builds for ${params.SERVICE}: ${builds}"
+
+                    // Set default rollback build if not manually specified
+                    if (!params.ROLLBACK_BUILD) {
+                        currentBuild.description = "Rolling back ${params.SERVICE} to build ${builds[0]}"
+                        env.ROLLBACK_BUILD = builds[0]
+                    } else {
+                        env.ROLLBACK_BUILD = params.ROLLBACK_BUILD
+                    }
+
+                    echo "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
                 }
             }
         }
@@ -45,21 +57,13 @@ pipeline {
             steps {
                 script {
                     def svc = params.SERVICE
-                    def selectedBuild = params.ROLLBACK_BUILD
-
-                    if (!selectedBuild) {
-                        // If not manually entered, pick the latest previous build
-                        selectedBuild = env.AVAILABLE_BUILDS.split(',')[0]
-                        echo "No rollback build specified. Using latest: ${selectedBuild}"
-                    }
-
-                    def remotePath = "${REMOTE_BASE}/${svc}/${selectedBuild}"
-                    def port = [ "service-a": 5000, "service-b": 5001, "service-c": 5002 ][svc]
+                    def buildNum = env.ROLLBACK_BUILD
+                    def remotePath = "${REMOTE_BASE}/${svc}/${buildNum}"
 
                     sshagent([env.SSH_CRED_ID]) {
                         sh """
-ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
-sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
+                        ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
+                        sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
 [Unit]
 Description=${svc} .NET Service
 After=network.target
@@ -72,20 +76,20 @@ RestartSec=5
 SyslogIdentifier=${svc}
 User=jenkins
 Environment=ASPNETCORE_ENVIRONMENT=test
-Environment=ASPNETCORE_URLS=http://0.0.0.0:${port}
+Environment=ASPNETCORE_URLS=http://0.0.0.0:5000
+
 [Install]
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable ${svc}.service
-sudo systemctl restart ${svc}.service
-sudo systemctl status ${svc}.service --no-pager || true
-"
+                        sudo systemctl daemon-reload
+                        sudo systemctl enable ${svc}.service
+                        sudo systemctl restart ${svc}.service
+                        sudo systemctl status ${svc}.service --no-pager || true
+                        "
                         """
                     }
-
-                    echo "${svc} rolled back to build ${selectedBuild} on port ${port}."
+                    echo "${svc} rolled back successfully to build ${buildNum}."
                 }
             }
         }
@@ -93,7 +97,7 @@ sudo systemctl status ${svc}.service --no-pager || true
 
     post {
         success {
-            echo "Rollback pipeline finished successfully."
+            echo "Rollback pipeline completed successfully."
         }
         failure {
             echo "Rollback pipeline failed."
