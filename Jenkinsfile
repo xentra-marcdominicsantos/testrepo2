@@ -2,17 +2,14 @@ pipeline {
     agent any
         
     environment {
-        PATH = "/home/jenkins/.dotnet/tools:${env.PATH}"         
-        DOTNET_ROOT = "/usr/lib/dotnet"                            
-        SONAR_SERVER = 'SonarQubeServer'
-        SSH_CRED_ID = 'jenkins-test-server-ssh'
-        REMOTE_BASE = '/opt/microservices'
+        PATH = "/home/jenkins/.dotnet/tools:${env.PATH}"         // Include Snap binaries + dotnet global tools
+        DOTNET_ROOT = "/usr/lib/dotnet"                             // .NET root
+        SONAR_SERVER = 'SonarQubeServer'                          // SonarQube server name in Jenkins
+        SSH_CRED_ID = 'jenkins-test-server-ssh'                  // SSH credential for test server
+        REMOTE_BASE = '/opt/microservices'                       // Deployment base path
         TEST_SERVER_IP = '172.31.7.79'
-
-        // NEW
-        S3_BUCKET = 'jenkins.legalsynq.com'
+		S3_BUCKET = 'jenkins.legalsynq.com'
         AWS_CRED = 'aws-jenkins-creds'
-        BUILD_TIMESTAMP = ""
     }
 
     parameters {
@@ -25,19 +22,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 git branch: 'main', url: 'https://github.com/xentra-marcdominicsantos/testrepo2.git'
-            }
-        }
-
-        // NEW STAGE
-        stage('Generate Timestamp') {
-            steps {
-                script {
-                    env.BUILD_TIMESTAMP = sh(
-                        script: "date +%Y-%m-%d_%H-%M-%S",
-                        returnStdout: true
-                    ).trim()
-                    echo "Timestamp: ${env.BUILD_TIMESTAMP}"
-                }
             }
         }
 
@@ -68,6 +52,7 @@ pipeline {
                         ["${svc}": {
                             stage("Build & Test: ${svc}") {
                                 dir(svc) {
+                                    // Clean output folder before publish
                                     sh 'rm -rf output/'
                                     sh "dotnet restore"
                                     sh "dotnet build -c Release"
@@ -98,9 +83,8 @@ pipeline {
                 }
             }
         }
-
-        // NEW S3 UPLOAD STAGE
-        stage('Upload Build Artifacts to S3') {
+		
+		stage('Upload Build Artifacts to S3') {
             steps {
                 script {
                     def services = env.SERVICES.split(',')
@@ -108,11 +92,11 @@ pipeline {
 
                     withAWS(credentials: "${AWS_CRED}", region: 'us-east-2') {
                         services_to_upload.each { svc ->
-                            echo "Uploading ${svc} build to S3 with timestamp ${env.BUILD_TIMESTAMP}..."
+                            echo "Uploading ${svc} build to S3 with build number ${env.BUILD_NUMBER}..."
 
                             sh """
                                 aws s3 cp ${svc}/output/ \
-                                s3://${S3_BUCKET}/JenkinsTestServer/${svc}/${env.BUILD_TIMESTAMP}/ \
+                                s3://${S3_BUCKET}/JenkinsTestServer/${svc}/${env.BUILD_NUMBER}/ \
                                 --recursive
                             """
                         }
@@ -127,49 +111,54 @@ pipeline {
                 script {
                     def services = env.SERVICES.split(',')
                     def services_to_deploy = (params.SERVICE == 'all') ? services : [params.SERVICE]
-                        
-                    sshagent([env.SSH_CRED_ID]) {
-                        services_to_deploy.each { svc ->
-                            sh """
-                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
-                                    cd ${REMOTE_BASE}/${svc} &&
-                                    ls -1dt */ | tail -n +2 | xargs -r rm -rf
-                                '
-                            """
-                        }
-                    }
+                    
+            sshagent([env.SSH_CRED_ID]) {
+                services_to_deploy.each { svc ->
+                    // Keep only the last 2 builds
+                    sh """
+                        ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
+                            cd ${REMOTE_BASE}/${svc} &&
+                            ls -1dt */ | tail -n +2 | xargs -r rm -rf
+                        '
+                    """
                 }
             }
         }
+    }
+}
 
+        
         stage('Deploy to Test Server') {
-            when { expression { params.ENV == 'test' } }
-            steps {
-                script {
-                    def servicePorts = [
-                        "service-a": 5000,
-                        "service-b": 5001,
-                        "service-c": 5002
-                    ]
+    when { expression { params.ENV == 'test' } }
+    steps {
+        script {
+            // Assign unique ports for each service
+            def servicePorts = [
+                "service-a": 5000,
+                "service-b": 5001,
+                "service-c": 5002
+            ]
 
-                    def services = env.SERVICES.split(',')
-                    def services_to_deploy = (params.SERVICE == 'all') ? services : [params.SERVICE]
+            def services = env.SERVICES.split(',')
+            def services_to_deploy = (params.SERVICE == 'all') ? services : [params.SERVICE]
 
-                    sshagent([env.SSH_CRED_ID]) {
-                        services_to_deploy.each { svc ->
+            sshagent([env.SSH_CRED_ID]) {
+                services_to_deploy.each { svc ->
+                    def remotePath = "${REMOTE_BASE}/${svc}/${env.BUILD_NUMBER}"
+                    def port = servicePorts[svc]
 
-                            def remotePath = "${REMOTE_BASE}/${svc}/${env.BUILD_TIMESTAMP}"
-                            def port = servicePorts[svc]
+                    // Create folder on test server
+                    sh """
+                        ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "mkdir -p ${remotePath}"
+                    """
 
-                            sh """
-                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "mkdir -p ${remotePath}"
-                            """
+                    // Copy published files
+                    sh """
+                        scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/
+                    """
 
-                            sh """
-                                scp -o StrictHostKeyChecking=no -r ${svc}/output/* jenkins@${TEST_SERVER_IP}:${remotePath}/
-                            """
-
-                            sh """
+                    // Create systemd service file (proper formatting, no indentation inside EOF)
+                    sh """
 ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} "
 sudo tee /etc/systemd/system/${svc}.service >/dev/null << EOF
 [Unit]
@@ -195,33 +184,34 @@ sudo systemctl enable ${svc}.service
 sudo systemctl restart ${svc}.service
 sudo systemctl status ${svc}.service --no-pager || true
 "
-                            """
-
-                            echo "${svc} deployed successfully on port ${port}."
-                        }
-                    }
+                    """
+                    echo "${svc} deployed successfully on port ${port}."
                 }
             }
         }
+    }
+}
+
+
     }
 
     post {
         always {
             withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
                 office365ConnectorSend webhookUrl: "${WEBHOOK}",
-                    message: "Jenkins pipeline completed (Timestamp: ${env.BUILD_TIMESTAMP}) on ENV=${params.ENV}"
+                    message: "Jenkins pipeline completed for Build: ${BUILD_NUMBER} on ENV=${params.ENV}"
             }
         }
         failure {
             withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
                 office365ConnectorSend webhookUrl: "${WEBHOOK}",
-                    message: "❌ Jenkins pipeline FAILED (Timestamp: ${env.BUILD_TIMESTAMP})"
+                    message: "❌ Jenkins pipeline FAILED for Build: ${BUILD_NUMBER}"
             }
         }
         success {
             withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
                 office365ConnectorSend webhookUrl: "${WEBHOOK}",
-                    message: "✅ Jenkins pipeline SUCCESS (Timestamp: ${env.BUILD_TIMESTAMP})"
+                    message: "✅ Jenkins pipeline SUCCESS for Build: ${BUILD_NUMBER}"
             }
         }
     }
