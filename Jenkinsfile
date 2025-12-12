@@ -106,7 +106,7 @@ pipeline {
                     def services = env.SERVICES.split(',')
                     def services_to_upload = (params.SERVICE == 'all') ? services : [params.SERVICE]
 
-                    withAWS(credentials: "${AWS_CRED}", region: 'ap-southeast-1') {
+                    withAWS(credentials: "${AWS_CRED}", region: 'us-east-2') {
                         services_to_upload.each { svc ->
                             echo "Uploading ${svc} build to S3 with timestamp ${BUILD_TIMESTAMP}..."
 
