@@ -108,11 +108,11 @@ pipeline {
 
                     withAWS(credentials: "${AWS_CRED}", region: 'us-east-2') {
                         services_to_upload.each { svc ->
-                            echo "Uploading ${svc} build to S3 with timestamp ${BUILD_TIMESTAMP}..."
+                            echo "Uploading ${svc} build to S3 with timestamp ${env.BUILD_TIMESTAMP}..."
 
                             sh """
                                 aws s3 cp ${svc}/output/ \
-                                s3://${S3_BUCKET}/JenkinsTestServer/${svc}/${BUILD_TIMESTAMP}/ \
+                                s3://${S3_BUCKET}/JenkinsTestServer/${svc}/${env.BUILD_TIMESTAMP}/ \
                                 --recursive
                             """
                         }
@@ -209,19 +209,19 @@ sudo systemctl status ${svc}.service --no-pager || true
         always {
             withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
                 office365ConnectorSend webhookUrl: "${WEBHOOK}",
-                    message: "Jenkins pipeline completed (Timestamp: ${BUILD_TIMESTAMP}) on ENV=${params.ENV}"
+                    message: "Jenkins pipeline completed (Timestamp: ${env.BUILD_TIMESTAMP}) on ENV=${params.ENV}"
             }
         }
         failure {
             withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
                 office365ConnectorSend webhookUrl: "${WEBHOOK}",
-                    message: "❌ Jenkins pipeline FAILED (Timestamp: ${BUILD_TIMESTAMP})"
+                    message: "❌ Jenkins pipeline FAILED (Timestamp: ${env.BUILD_TIMESTAMP})"
             }
         }
         success {
             withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
                 office365ConnectorSend webhookUrl: "${WEBHOOK}",
-                    message: "✅ Jenkins pipeline SUCCESS (Timestamp: ${BUILD_TIMESTAMP})"
+                    message: "✅ Jenkins pipeline SUCCESS (Timestamp: ${env.BUILD_TIMESTAMP})"
             }
         }
     }
