@@ -26,7 +26,7 @@ pipeline {
         string(
             name: 'ROLLBACK_BUILD',
             defaultValue: '',
-            description: 'Build number to rollback to (required)'
+            description: 'Build number to rollback to'
         )
     }
 
@@ -34,10 +34,16 @@ pipeline {
 
         /* --------------------------------------------------- */
         stage('Validate Rollback Build') {
+            when {
+                expression {
+                    // Run validation ONLY for manual builds
+                    currentBuild.rawBuild.getCause(hudson.model.Cause$UserIdCause) != null
+                }
+            }
             steps {
                 script {
                     if (!params.ROLLBACK_BUILD?.trim()) {
-                        error "ROLLBACK_BUILD is required"
+                        error "ROLLBACK_BUILD is required for manual rollback"
                     }
 
                     if (params.ROLLBACK_SOURCE == 'server') {
@@ -64,7 +70,10 @@ pipeline {
         /* --------------------------------------------------- */
         stage('Fetch Artifacts from S3') {
             when {
-                expression { params.ROLLBACK_SOURCE == 's3' }
+                expression {
+                    params.ROLLBACK_SOURCE == 's3' &&
+                    params.ROLLBACK_BUILD?.trim()
+                }
             }
             steps {
                 script {
@@ -95,6 +104,12 @@ pipeline {
 
         /* --------------------------------------------------- */
         stage('Restart Service') {
+            when {
+                expression {
+                    // Only restart when rollback build is provided
+                    params.ROLLBACK_BUILD?.trim()
+                }
+            }
             steps {
                 script {
                     def servicePorts = [
@@ -145,24 +160,34 @@ sudo systemctl status ${svc}.service --no-pager || true
     /* --------------------------------------------------- */
     post {
         success {
+            when {
+                expression { params.ROLLBACK_BUILD?.trim() }
+            }
             withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
-                office365ConnectorSend webhookUrl: "${WEBHOOK}",
+                office365ConnectorSend(
+                    webhookUrl: WEBHOOK,
                     message: """✅ ROLLBACK SUCCESS
 Service: ${params.SERVICE}
 Source: ${params.ROLLBACK_SOURCE}
 Build: ${params.ROLLBACK_BUILD}
 """
+                )
             }
         }
 
         failure {
+            when {
+                expression { params.ROLLBACK_BUILD?.trim() }
+            }
             withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
-                office365ConnectorSend webhookUrl: "${WEBHOOK}",
+                office365ConnectorSend(
+                    webhookUrl: WEBHOOK,
                     message: """❌ ROLLBACK FAILED
 Service: ${params.SERVICE}
 Source: ${params.ROLLBACK_SOURCE}
 Build: ${params.ROLLBACK_BUILD}
 """
+                )
             }
         }
     }
