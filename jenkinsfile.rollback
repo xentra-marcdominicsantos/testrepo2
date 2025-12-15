@@ -3,7 +3,6 @@ pipeline {
 
     environment {
         SSH_CRED_ID    = 'jenkins-test-server-ssh'
-        AWS_CRED       = 'aws-jenkins-creds' // Optional if using IAM user
         S3_BUCKET      = 'jenkins.legalsynq.com'
         REMOTE_BASE    = '/opt/microservices'
         TEST_SERVER_IP = '172.31.7.79'
@@ -33,6 +32,7 @@ pipeline {
         stage('Get Previous Builds') {
             steps {
                 script {
+                    // List existing builds on the server
                     def buildsRaw = sh(
                         script: "ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} ls -1 ${REMOTE_BASE}/${params.SERVICE}",
                         returnStdout: true
@@ -47,7 +47,7 @@ pipeline {
                     // Sort numerically descending
                     builds.sort { a, b -> b.toInteger() <=> a.toInteger() }
 
-                    // Pick latest if empty
+                    // Pick latest if ROLLBACK_BUILD not provided
                     env.ROLLBACK_BUILD = params.ROLLBACK_BUILD?.trim() ? params.ROLLBACK_BUILD : builds[0]
 
                     currentBuild.description = "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
@@ -76,21 +76,16 @@ pipeline {
                         error "❌ Build ${env.ROLLBACK_BUILD} not found on server"
                     }
 
-                    // Download build from S3 without deleting other builds
+                    // Fetch from S3 directly on the server
                     echo "⬇️ Downloading build from S3 to ${remotePath}..."
                     sshagent([env.SSH_CRED_ID]) {
-                        // Use withAWS credentials if IAM user, or omit credentials for EC2 role
-                        withAWS(region: "${AWS_REGION}") {
-                            sh """
-                            ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
-                                mkdir -p ${remotePath} &&
-                                aws s3 sync \
-                                  s3://${S3_BUCKET}/JenkinsTestServer/${params.SERVICE}/${env.ROLLBACK_BUILD}/ \
-                                  ${remotePath}/ \
-                                  --recursive
-                            '
-                            """
-                        }
+                        sh """
+                        ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
+                            export PATH=\$PATH:/usr/local/bin &&
+                            mkdir -p ${remotePath} &&
+                            aws s3 sync s3://${S3_BUCKET}/JenkinsTestServer/${params.SERVICE}/${env.ROLLBACK_BUILD}/ ${remotePath}/
+                        '
+                        """
                     }
                     echo "✅ Build downloaded from S3 successfully."
                 }
