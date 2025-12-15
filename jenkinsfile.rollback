@@ -3,125 +3,65 @@ pipeline {
 
     environment {
         SSH_CRED_ID = 'jenkins-test-server-ssh'
-        AWS_CRED    = 'aws-jenkins-creds'
-        S3_BUCKET   = 'jenkins.legalsynq.com'
         REMOTE_BASE = '/opt/microservices'
         TEST_SERVER_IP = '172.31.7.79'
-        AWS_REGION = 'us-east-2'
     }
 
     parameters {
         choice(
             name: 'SERVICE',
             choices: ['service-a', 'service-b', 'service-c'],
-            description: 'Service to rollback'
+            description: 'Which service to rollback'
         )
-
-        choice(
-            name: 'ROLLBACK_SOURCE',
-            choices: ['s3', 'server'],
-            description: 'Rollback from S3 or existing server build'
-        )
-
         string(
             name: 'ROLLBACK_BUILD',
             defaultValue: '',
-            description: 'Build number to rollback to'
+            description: 'Leave empty to automatically pick latest build'
         )
     }
 
     stages {
 
-        /* --------------------------------------------------- */
-        stage('Validate Rollback Build') {
-            when {
-                expression {
-                    // Run validation ONLY for manual builds
-                    currentBuild.rawBuild.getCause(hudson.model.Cause$UserIdCause) != null
-                }
-            }
+        stage('Get Previous Builds') {
             steps {
                 script {
+                    // Fetch list of builds from remote server
+                    def buildsRaw = sh(
+                        script: "ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} ls -1 ${REMOTE_BASE}/${params.SERVICE}",
+                        returnStdout: true
+                    ).trim().split('\n')
+
+                    // Convert to string and filter out empty entries
+                    def builds = buildsRaw.collect { it.toString().trim() }.findAll { it }
+
+                    if (!builds || builds.size() == 0) {
+                        error "No previous builds found for ${params.SERVICE}"
+                    }
+
+                    // Sort numerically descending (latest first)
+                    builds.sort { a, b -> b.toInteger() <=> a.toInteger() }
+
+                    echo "Available builds for ${params.SERVICE}: ${builds}"
+
+                    // Pick latest build if ROLLBACK_BUILD is empty
                     if (!params.ROLLBACK_BUILD?.trim()) {
-                        error "ROLLBACK_BUILD is required for manual rollback"
+                        env.ROLLBACK_BUILD = builds[0]
+                    } else {
+                        env.ROLLBACK_BUILD = params.ROLLBACK_BUILD
                     }
 
-                    if (params.ROLLBACK_SOURCE == 'server') {
-                        echo "Validating build existence on server..."
-
-                        def status = sh(
-                            script: """
-                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} \
-                                test -d ${REMOTE_BASE}/${params.SERVICE}/${params.ROLLBACK_BUILD}
-                            """,
-                            returnStatus: true
-                        )
-
-                        if (status != 0) {
-                            error "❌ Build ${params.ROLLBACK_BUILD} does NOT exist on server"
-                        }
-
-                        echo "✅ Build exists on server"
-                    }
+                    currentBuild.description = "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
+                    echo "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
                 }
             }
         }
 
-        /* --------------------------------------------------- */
-        stage('Fetch Artifacts from S3') {
-            when {
-                expression {
-                    params.ROLLBACK_SOURCE == 's3' &&
-                    params.ROLLBACK_BUILD?.trim()
-                }
-            }
+        stage('Rollback Microservice') {
             steps {
                 script {
-                    def remotePath =
-                        "${REMOTE_BASE}/${params.SERVICE}/${params.ROLLBACK_BUILD}"
-
-                    sshagent([env.SSH_CRED_ID]) {
-                        withAWS(credentials: "${AWS_CRED}", region: "${AWS_REGION}") {
-
-                            sh """
-                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} \
-                                "mkdir -p ${remotePath}"
-                            """
-
-                            sh """
-                                ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
-                                    aws s3 cp \
-                                    s3://${S3_BUCKET}/JenkinsTestServer/${params.SERVICE}/${params.ROLLBACK_BUILD}/ \
-                                    ${remotePath}/ \
-                                    --recursive
-                                '
-                            """
-                        }
-                    }
-                }
-            }
-        }
-
-        /* --------------------------------------------------- */
-        stage('Restart Service') {
-            when {
-                expression {
-                    // Only restart when rollback build is provided
-                    params.ROLLBACK_BUILD?.trim()
-                }
-            }
-            steps {
-                script {
-                    def servicePorts = [
-                        "service-a": 5000,
-                        "service-b": 5001,
-                        "service-c": 5002
-                    ]
-
                     def svc = params.SERVICE
-                    def port = servicePorts[svc]
-                    def path =
-                        "${REMOTE_BASE}/${svc}/${params.ROLLBACK_BUILD}"
+                    def buildNum = env.ROLLBACK_BUILD
+                    def remotePath = "${REMOTE_BASE}/${svc}/${buildNum}"
 
                     sshagent([env.SSH_CRED_ID]) {
                         sh """
@@ -132,63 +72,39 @@ Description=${svc} .NET Service
 After=network.target
 
 [Service]
-WorkingDirectory=${path}
-ExecStart=/usr/lib/dotnet/dotnet ${path}/${svc}.dll
+WorkingDirectory=${remotePath}
+ExecStart=/usr/lib/dotnet/dotnet ${remotePath}/${svc}.dll
 Restart=always
 RestartSec=5
+SyslogIdentifier=${svc}
 User=jenkins
 Environment=ASPNETCORE_ENVIRONMENT=test
-Environment=ASPNETCORE_URLS=http://0.0.0.0:${port}
+Environment=ASPNETCORE_URLS=http://0.0.0.0:5000
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
+sudo systemctl enable ${svc}.service
 sudo systemctl restart ${svc}.service
 sudo systemctl status ${svc}.service --no-pager || true
 "
                         """
                     }
 
-                    echo "✅ ${svc} rolled back to build ${params.ROLLBACK_BUILD} (${params.ROLLBACK_SOURCE})"
+                    echo "${svc} rolled back successfully to build ${buildNum}."
                 }
             }
         }
     }
 
-    /* --------------------------------------------------- */
     post {
         success {
-            when {
-                expression { params.ROLLBACK_BUILD?.trim() }
-            }
-            withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
-                office365ConnectorSend(
-                    webhookUrl: WEBHOOK,
-                    message: """✅ ROLLBACK SUCCESS
-Service: ${params.SERVICE}
-Source: ${params.ROLLBACK_SOURCE}
-Build: ${params.ROLLBACK_BUILD}
-"""
-                )
-            }
+            echo "Rollback pipeline completed successfully."
         }
-
         failure {
-            when {
-                expression { params.ROLLBACK_BUILD?.trim() }
-            }
-            withCredentials([string(credentialsId: 'teams-webhook', variable: 'WEBHOOK')]) {
-                office365ConnectorSend(
-                    webhookUrl: WEBHOOK,
-                    message: """❌ ROLLBACK FAILED
-Service: ${params.SERVICE}
-Source: ${params.ROLLBACK_SOURCE}
-Build: ${params.ROLLBACK_BUILD}
-"""
-                )
-            }
+            echo "Rollback pipeline failed."
         }
     }
 }
