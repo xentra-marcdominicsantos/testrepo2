@@ -33,7 +33,6 @@ pipeline {
         stage('Get Previous Builds') {
             steps {
                 script {
-                    // Fetch builds from server
                     def buildsRaw = sh(
                         script: "ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} ls -1 ${REMOTE_BASE}/${params.SERVICE}",
                         returnStdout: true
@@ -45,12 +44,8 @@ pipeline {
                         error "No previous builds found for ${params.SERVICE}"
                     }
 
-                    // Sort numerically descending
                     builds.sort { a, b -> b.toInteger() <=> a.toInteger() }
 
-                    echo "Available builds: ${builds}"
-
-                    // Pick latest if empty
                     env.ROLLBACK_BUILD = params.ROLLBACK_BUILD?.trim() ? params.ROLLBACK_BUILD : builds[0]
 
                     currentBuild.description = "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
@@ -79,7 +74,7 @@ pipeline {
                         error "❌ Build ${env.ROLLBACK_BUILD} not found on server"
                     }
 
-                    // If source is S3 → download to server
+                    // If source is S3 → download to server without deleting existing builds
                     echo "⬇️ Downloading build from S3 to ${remotePath}..."
                     sshagent([env.SSH_CRED_ID]) {
                         withAWS(credentials: "${AWS_CRED}", region: "${AWS_REGION}") {
