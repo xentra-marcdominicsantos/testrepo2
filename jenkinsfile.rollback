@@ -84,7 +84,7 @@ pipeline {
                             sh """
                             ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
                                 mkdir -p ${remotePath} &&
-                                aws s3 cp \
+                                aws s3 sync \
                                   s3://${S3_BUCKET}/JenkinsTestServer/${params.SERVICE}/${env.ROLLBACK_BUILD}/ \
                                   ${remotePath}/ \
                                   --recursive
