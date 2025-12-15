@@ -2,12 +2,12 @@ pipeline {
     agent any
 
     environment {
-        SSH_CRED_ID = 'jenkins-test-server-ssh'
-        AWS_CRED    = 'aws-jenkins-creds'
-        S3_BUCKET   = 'jenkins.legalsynq.com'
-        REMOTE_BASE = '/opt/microservices'
+        SSH_CRED_ID    = 'jenkins-test-server-ssh'
+        AWS_CRED       = 'aws-jenkins-creds' // Optional if using IAM user
+        S3_BUCKET      = 'jenkins.legalsynq.com'
+        REMOTE_BASE    = '/opt/microservices'
         TEST_SERVER_IP = '172.31.7.79'
-        AWS_REGION = 'us-east-2'
+        AWS_REGION     = 'us-east-2'
     }
 
     parameters {
@@ -44,8 +44,10 @@ pipeline {
                         error "No previous builds found for ${params.SERVICE}"
                     }
 
+                    // Sort numerically descending
                     builds.sort { a, b -> b.toInteger() <=> a.toInteger() }
 
+                    // Pick latest if empty
                     env.ROLLBACK_BUILD = params.ROLLBACK_BUILD?.trim() ? params.ROLLBACK_BUILD : builds[0]
 
                     currentBuild.description = "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
@@ -74,10 +76,11 @@ pipeline {
                         error "❌ Build ${env.ROLLBACK_BUILD} not found on server"
                     }
 
-                    // If source is S3 → download to server without deleting existing builds
+                    // Download build from S3 without deleting other builds
                     echo "⬇️ Downloading build from S3 to ${remotePath}..."
                     sshagent([env.SSH_CRED_ID]) {
-                        withAWS(credentials: "${AWS_CRED}", region: "${AWS_REGION}") {
+                        // Use withAWS credentials if IAM user, or omit credentials for EC2 role
+                        withAWS(region: "${AWS_REGION}") {
                             sh """
                             ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
                                 mkdir -p ${remotePath} &&
@@ -97,8 +100,8 @@ pipeline {
         stage('Rollback Microservice') {
             steps {
                 script {
-                    def svc = params.SERVICE
-                    def buildNum = env.ROLLBACK_BUILD
+                    def svc       = params.SERVICE
+                    def buildNum  = env.ROLLBACK_BUILD
                     def remotePath = "${REMOTE_BASE}/${svc}/${buildNum}"
 
                     sshagent([env.SSH_CRED_ID]) {
