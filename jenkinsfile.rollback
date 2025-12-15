@@ -2,11 +2,9 @@ pipeline {
     agent any
 
     environment {
-        SSH_CRED_ID    = 'jenkins-test-server-ssh'
-        S3_BUCKET      = 'jenkins.legalsynq.com'
-        REMOTE_BASE    = '/opt/microservices'
+        SSH_CRED_ID = 'jenkins-test-server-ssh'
+        REMOTE_BASE = '/opt/microservices'
         TEST_SERVER_IP = '172.31.7.79'
-        AWS_REGION     = 'us-east-2'
     }
 
     parameters {
@@ -14,11 +12,6 @@ pipeline {
             name: 'SERVICE',
             choices: ['service-a', 'service-b', 'service-c'],
             description: 'Which service to rollback'
-        )
-        choice(
-            name: 'ROLLBACK_SOURCE',
-            choices: ['server', 's3'],
-            description: 'Where to rollback from: server or S3'
         )
         string(
             name: 'ROLLBACK_BUILD',
@@ -32,62 +25,33 @@ pipeline {
         stage('Get Previous Builds') {
             steps {
                 script {
-                    // List existing builds on the server
+                    // Fetch list of builds from remote server
                     def buildsRaw = sh(
                         script: "ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} ls -1 ${REMOTE_BASE}/${params.SERVICE}",
                         returnStdout: true
                     ).trim().split('\n')
 
+                    // Convert to string and filter out empty entries
                     def builds = buildsRaw.collect { it.toString().trim() }.findAll { it }
 
                     if (!builds || builds.size() == 0) {
                         error "No previous builds found for ${params.SERVICE}"
                     }
 
-                    // Sort numerically descending
+                    // Sort numerically descending (latest first)
                     builds.sort { a, b -> b.toInteger() <=> a.toInteger() }
 
-                    // Pick latest if ROLLBACK_BUILD not provided
-                    env.ROLLBACK_BUILD = params.ROLLBACK_BUILD?.trim() ? params.ROLLBACK_BUILD : builds[0]
+                    echo "Available builds for ${params.SERVICE}: ${builds}"
+
+                    // Pick latest build if ROLLBACK_BUILD is empty
+                    if (!params.ROLLBACK_BUILD?.trim()) {
+                        env.ROLLBACK_BUILD = builds[0]
+                    } else {
+                        env.ROLLBACK_BUILD = params.ROLLBACK_BUILD
+                    }
 
                     currentBuild.description = "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
-                    echo "Selected build: ${env.ROLLBACK_BUILD}"
-                }
-            }
-        }
-
-        stage('Ensure Build Exists / Fetch from S3') {
-            steps {
-                script {
-                    def remotePath = "${REMOTE_BASE}/${params.SERVICE}/${env.ROLLBACK_BUILD}"
-
-                    // Check if build exists on server
-                    def exists = sh(
-                        script: "ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} test -d ${remotePath}",
-                        returnStatus: true
-                    ) == 0
-
-                    if (exists) {
-                        echo "✅ Build already exists on server: ${remotePath}"
-                        return
-                    }
-
-                    if (params.ROLLBACK_SOURCE == 'server') {
-                        error "❌ Build ${env.ROLLBACK_BUILD} not found on server"
-                    }
-
-                    // Fetch from S3 directly on the server
-                    echo "⬇️ Downloading build from S3 to ${remotePath}..."
-                    sshagent([env.SSH_CRED_ID]) {
-                        sh """
-                        ssh -o StrictHostKeyChecking=no jenkins@${TEST_SERVER_IP} '
-                            export PATH=\$PATH:/usr/local/bin &&
-                            mkdir -p ${remotePath} &&
-                            aws s3 sync s3://${S3_BUCKET}/JenkinsTestServer/${params.SERVICE}/${env.ROLLBACK_BUILD}/ ${remotePath}/
-                        '
-                        """
-                    }
-                    echo "✅ Build downloaded from S3 successfully."
+                    echo "Rolling back ${params.SERVICE} to build ${env.ROLLBACK_BUILD}"
                 }
             }
         }
@@ -95,8 +59,8 @@ pipeline {
         stage('Rollback Microservice') {
             steps {
                 script {
-                    def svc       = params.SERVICE
-                    def buildNum  = env.ROLLBACK_BUILD
+                    def svc = params.SERVICE
+                    def buildNum = env.ROLLBACK_BUILD
                     def remotePath = "${REMOTE_BASE}/${svc}/${buildNum}"
 
                     sshagent([env.SSH_CRED_ID]) {
@@ -129,7 +93,7 @@ sudo systemctl status ${svc}.service --no-pager || true
                         """
                     }
 
-                    echo "✅ ${svc} rolled back successfully to build ${buildNum}."
+                    echo "${svc} rolled back successfully to build ${buildNum}."
                 }
             }
         }
